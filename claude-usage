@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+# claude-usage — show subscription usage for each Claude Code account.
+#
+# Reads each account's OAuth token straight from the macOS Keychain (the same
+# per-account slots that `claude-acct` manages) and queries Anthropic's usage
+# endpoint — the data behind Claude Code's own `/usage` view.
+#
+# Fetches fresh on every run (no background polling). If an account has no
+# stored login, an expired session, or the API can't be reached, that account
+# shows a warning instead of numbers.
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+
+# ---- accounts --------------------------------------------------------------
+# Claude Code keys its Keychain login per config dir, in a slot named
+# "Claude Code-credentials-<sha256(config_dir)[:8]>" (and maintains/refreshes it
+# itself). We read that slot directly so the data is always current; claude-acct
+# also mirrors the login into a stable "-<label>" slot as a fallback.
+#
+# Accounts come from the same external config file claude-acct uses, so the two
+# tools never drift. Each line is:  <label>  <config_dir>  [email]
+# The mirror slot is derived as "Claude Code-credentials-<label>".
+CONFIG_FILE = os.environ.get("CLAUDE_ACCT_CONFIG") or os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "claude-acct", "accounts",
+)
+KEYCHAIN_ACCT = os.environ.get("USER", "")
+
+
+def load_accounts():
+    """Read accounts from CONFIG_FILE -> list of (label, config_dir, mirror_slot, email)."""
+    accounts = []
+    try:
+        with open(CONFIG_FILE) as fh:
+            lines = fh.readlines()
+    except OSError:
+        return accounts
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        label, config_dir = parts[0], parts[1] if len(parts) > 1 else ""
+        if not config_dir:
+            continue
+        email = parts[2] if len(parts) > 2 else ""
+        accounts.append((label, config_dir, f"Claude Code-credentials-{label}", email))
+    return accounts
+
+
+ACCOUNTS = load_accounts()
+
+
+def slot_for_dir(config_dir):
+    h = hashlib.sha256(os.path.expanduser(config_dir).encode()).hexdigest()[:8]
+    return f"Claude Code-credentials-{h}"
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+HEADERS = {
+    "anthropic-beta": "oauth-2025-04-20",
+    "anthropic-version": "2023-06-01",
+    "User-Agent": "claude-usage-widget/0.1",
+}
+
+BAR_WIDTH = 18
+
+# ---- colors ----------------------------------------------------------------
+USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+
+def c(code, s):
+    return f"\033[{code}m{s}\033[0m" if USE_COLOR else s
+
+
+DIM = lambda s: c("2", s)
+BOLD = lambda s: c("1", s)
+RED = lambda s: c("31", s)
+YELLOW = lambda s: c("33", s)
+GREEN = lambda s: c("32", s)
+CYAN = lambda s: c("36", s)
+
+
+def sev_color(severity, pct):
+    if severity == "critical" or pct >= 90:
+        return RED
+    if severity == "warning" or pct >= 70:
+        return YELLOW
+    return GREEN
+
+
+# ---- keychain --------------------------------------------------------------
+def read_slot(service):
+    try:
+        out = subprocess.run(
+            ["security", "find-generic-password", "-s", service,
+             "-a", KEYCHAIN_ACCT, "-w"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        return json.loads(out.stdout)["claudeAiOauth"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
+def get_oauth(config_dir, mirror_slot):
+    """Read the per-config-dir slot Claude Code maintains itself (always fresh);
+    fall back to the stable mirror slot written by claude-acct."""
+    return read_slot(slot_for_dir(config_dir)) or read_slot(mirror_slot)
+
+
+# ---- usage fetch -----------------------------------------------------------
+class Unreachable(Exception):
+    pass
+
+
+def fetch_usage(token):
+    req = urllib.request.Request(USAGE_URL, headers={**HEADERS, "Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise Unreachable("session expired")
+        raise Unreachable(f"HTTP {e.code}")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise Unreachable("no network")
+    except json.JSONDecodeError:
+        raise Unreachable("bad response")
+
+
+# ---- normalize -------------------------------------------------------------
+LIMIT_LABELS = {
+    "session": "Session (5h)",
+    "weekly_all": "Weekly (all)",
+    "weekly_opus": "Weekly (Opus)",
+    "weekly_sonnet": "Weekly (Sonnet)",
+}
+
+
+def money(block):
+    if not block:
+        return None
+    exp = block.get("exponent", 2)
+    return (block.get("amount_minor", 0) or 0) / (10 ** exp), block.get("currency", "")
+
+
+def normalize(data):
+    """Flatten the usage payload into a stable shape for text + JSON output."""
+    limits = data.get("limits") or []
+    if not limits:  # fall back to flat fields if `limits` ever disappears
+        for kind, blk in (("session", data.get("five_hour")), ("weekly_all", data.get("seven_day"))):
+            if blk:
+                limits.append({"kind": kind, "percent": blk.get("utilization", 0),
+                               "resets_at": blk.get("resets_at"), "severity": "normal"})
+    out_limits = []
+    for lim in limits:
+        kind = lim.get("kind", "?")
+        out_limits.append({
+            "kind": kind,
+            "label": LIMIT_LABELS.get(kind, kind.replace("_", " ").title()),
+            "percent": float(lim.get("percent", 0) or 0),
+            "severity": lim.get("severity") or "normal",
+            "resets_at": lim.get("resets_at"),
+        })
+
+    spend = data.get("spend") or {}
+    out_spend = None
+    if spend.get("enabled"):
+        used, limit = money(spend.get("used")), money(spend.get("limit"))
+        if used and limit:
+            out_spend = {
+                "percent": float(spend.get("percent", 0) or 0),
+                "severity": spend.get("severity") or "normal",
+                "used": used[0], "limit": limit[0], "currency": limit[1],
+            }
+    return out_limits, out_spend
+
+
+def gather():
+    """Build the full report (all accounts) used by both renderers."""
+    accounts = []
+    for label, config_dir, mirror_slot, email in ACCOUNTS:
+        acct = {"label": label, "email": email}
+        oauth = get_oauth(config_dir, mirror_slot)
+        token = oauth.get("accessToken") if oauth else None
+        if not token:
+            acct.update(ok=False, error="not logged in", hint=f"run: claude-acct {label}")
+        else:
+            try:
+                limits, spend = normalize(fetch_usage(token))
+                acct.update(ok=True, limits=limits, spend=spend)
+            except Unreachable as e:
+                expired = "expired" in str(e)
+                acct.update(ok=False, error=str(e),
+                            hint=f"re-login: claude-acct {label}" if expired else "try again later")
+        accounts.append(acct)
+    return {"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "accounts": accounts}
+
+
+# ---- text rendering --------------------------------------------------------
+def bar(pct, color):
+    pct = max(0.0, min(100.0, float(pct)))
+    filled = int(round(pct / 100 * BAR_WIDTH))
+    return color("█" * filled) + DIM("░" * (BAR_WIDTH - filled))
+
+
+def fmt_reset(iso):
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso).astimezone()
+    except ValueError:
+        return ""
+    now = datetime.now(timezone.utc).astimezone()
+    delta = dt - now
+    secs = int(delta.total_seconds())
+    if secs <= 0:
+        when = "due"
+    elif secs < 86400:
+        h, m = divmod(secs // 60, 60)
+        when = f"in {h}h {m:02d}m" if h else f"in {m}m"
+    else:
+        when = dt.strftime("in %a %d %b")
+    return DIM(f"resets {when} ({dt.strftime('%H:%M')})")
+
+
+def render_text(report):
+    now = datetime.fromisoformat(report["generated_at"]).strftime("%a %d %b %H:%M")
+    print()
+    print(CYAN("  ⚡ Claude usage") + DIM(f"   ·   {now}"))
+    print(DIM("  " + "─" * 46))
+    if not report["accounts"]:
+        print(f"  {YELLOW('⚠ no accounts configured')}")
+        print(DIM(f"    add some to {CONFIG_FILE}"))
+        print()
+        return
+    for acct in report["accounts"]:
+        print(f"  {BOLD(acct['label'].capitalize())}  {DIM(acct['email'])}")
+        if not acct.get("ok"):
+            print(f"    {YELLOW('⚠ ' + acct['error'])}  {DIM(acct.get('hint', ''))}")
+            print()
+            continue
+        for lim in acct["limits"]:
+            color = sev_color(lim["severity"], lim["percent"])
+            pct = color("%3.0f%%" % lim["percent"])
+            print(f"    {lim['label']:<14}{bar(lim['percent'], color)} "
+                  f"{pct}  {fmt_reset(lim['resets_at'])}")
+        spend = acct.get("spend")
+        if spend:
+            color = sev_color(spend["severity"], spend["percent"])
+            pct = color("%3.0f%%" % spend["percent"])
+            money_txt = DIM("%.2f / %.2f %s" % (spend["used"], spend["limit"], spend["currency"]))
+            print(f"    {'Extra usage':<14}{bar(spend['percent'], color)} {pct}  {money_txt}")
+        print()
+
+
+# ---- main ------------------------------------------------------------------
+def main():
+    report = gather()
+    if "--json" in sys.argv[1:]:
+        print(json.dumps(report))
+    else:
+        render_text(report)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

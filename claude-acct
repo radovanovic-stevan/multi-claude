@@ -1,0 +1,136 @@
+#!/bin/zsh
+# claude-acct — launch Claude Code under a chosen account.
+#
+# Claude Code keys its Keychain login *per config dir*: it reads/writes the slot
+# "Claude Code-credentials-<sha256(config_dir)[:8]>" and refreshes it itself. So
+# selecting an account is just a matter of pointing CLAUDE_CONFIG_DIR at that
+# account's dir — each dir keeps its own independent login.
+#
+# We additionally mirror the live login into a stable, human-named slot
+# ("Claude Code-credentials-<label>") before and after each session, so tools
+# like `claude-usage` can find it without depending on Claude's internal hashing.
+#
+# Accounts are defined in an external config file (see CONFIG_FILE below) so no
+# personal details live in this script. Run with no known account to be prompted.
+
+ACCT="$USER"   # Keychain "account" field
+
+# ---- account config --------------------------------------------------------
+# Accounts live in a plain-text file, one per line:
+#
+#   <label>  <config_dir>  [email]
+#
+# whitespace-separated. `email` is optional (shown for context only). Lines
+# starting with # and blank lines are ignored. ~ and $HOME are expanded in
+# config_dir. The first account listed is treated as the "primary" whose skills
+# folder is shared with the others (see below).
+CONFIG_FILE="${CLAUDE_ACCT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-acct/accounts}"
+
+typeset -a LABELS                 # account labels, in file order
+typeset -A CONFIG DESC            # label -> config dir / email
+
+load_accounts() {
+  if [ ! -f "$CONFIG_FILE" ]; then
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    cat > "$CONFIG_FILE" <<'SAMPLE'
+# claude-acct accounts — one per line:
+#   <label>  <config_dir>  [email]
+# Lines starting with # are ignored. The first account is the "primary" whose
+# skills folder is shared with the others. Edit this file, then re-run.
+#
+# work      ~/.claude            you@work.example
+# personal  ~/.claude-personal   you@personal.example
+SAMPLE
+    echo "No accounts configured. I created a starter file at:" >&2
+    echo "  $CONFIG_FILE" >&2
+    echo "Edit it to list your accounts, then re-run." >&2
+    exit 1
+  fi
+
+  local label dir email
+  while read -r label dir email; do
+    [ -z "$label" ] && continue
+    case "$label" in \#*) continue ;; esac
+    dir="${dir/#\~/$HOME}"                 # expand leading ~
+    dir="${dir//\$HOME/$HOME}"             # expand literal $HOME
+    LABELS+="$label"
+    CONFIG[$label]="$dir"
+    DESC[$label]="$email"
+  done < "$CONFIG_FILE"
+
+  if [ ${#LABELS} -eq 0 ]; then
+    echo "No accounts found in $CONFIG_FILE — add at least one." >&2
+    exit 1
+  fi
+}
+
+CLAUDE_BIN="$(command -v claude)"
+[ -z "$CLAUDE_BIN" ] && { echo "claude not found on PATH" >&2; exit 1; }
+
+load_accounts
+
+# Keychain slot Claude Code itself uses for a given config dir.
+slot_for_dir() {
+  local h; h="$(printf %s "$1" | shasum -a 256 | cut -c1-8)"
+  printf 'Claude Code-credentials-%s' "$h"
+}
+
+read_slot()  { security find-generic-password -s "$1" -a "$ACCT" -w 2>/dev/null; }
+write_slot() { security add-generic-password -U -s "$1" -a "$ACCT" -w "$2" 2>/dev/null; }
+
+# Copy the live per-dir login into the stable "-<label>" mirror slot (best-effort).
+mirror_login() {
+  local blob; blob="$(read_slot "$(slot_for_dir "${CONFIG[$NAME]}")")"
+  [ -n "$blob" ] && write_slot "Claude Code-credentials-$NAME" "$blob"
+}
+
+# ---- pick the account ------------------------------------------------------
+# If the first arg is a known account label, consume it; the rest go to claude.
+NAME=""
+if [ -n "$1" ] && [ -n "${CONFIG[$1]}" ]; then
+  NAME="$1"; shift
+fi
+if [ -z "$NAME" ]; then
+  echo "Choose an account:"
+  local i=1
+  for label in "${LABELS[@]}"; do
+    printf "  %d) %-10s %s\n" "$i" "$label" "${DESC[$label]}"
+    i=$((i + 1))
+  done
+  printf "Selection [1-%d]: " "${#LABELS}"
+  read choice
+  if [[ "$choice" == <-> ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#LABELS} ]; then
+    NAME="${LABELS[$choice]}"
+  elif [ -n "${CONFIG[$choice]}" ]; then
+    NAME="$choice"
+  else
+    echo "Unknown selection." >&2; exit 1
+  fi
+fi
+if [ -z "${CONFIG[$NAME]}" ]; then
+  echo "Unknown account '$NAME' (known: ${LABELS[*]})" >&2; exit 1
+fi
+
+echo "→ Using '$NAME' (${DESC[$NAME]:-no email})"
+
+# ---- launch ----------------------------------------------------------------
+export CLAUDE_CONFIG_DIR="${CONFIG[$NAME]}"
+mkdir -p "$CLAUDE_CONFIG_DIR"
+
+# Share skills across accounts: every non-primary config dir borrows the
+# canonical skills folder from the *first* account listed (its config_dir/skills)
+# via symlink, so all sessions see the same skills. Skip if a skills entry
+# already exists there.
+CANONICAL_SKILLS="${CONFIG[${LABELS[1]}]}/skills"
+if [ "$CLAUDE_CONFIG_DIR" != "${CONFIG[${LABELS[1]}]}" ] && [ -d "$CANONICAL_SKILLS" ] \
+   && [ ! -e "$CLAUDE_CONFIG_DIR/skills" ]; then
+  ln -s "$CANONICAL_SKILLS" "$CLAUDE_CONFIG_DIR/skills"
+fi
+
+mirror_login   # publish current login for claude-usage before the session
+
+"$CLAUDE_BIN" "$@"
+status=$?
+
+mirror_login   # capture any token refresh from this session
+exit $status
