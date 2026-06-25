@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/multiclaude_logo.svg" alt="multi-claude" width="420">
+</p>
+
 # multi-claude
 
 A small set of macOS companion tools for [Claude Code](https://claude.com/claude-code):
