@@ -112,6 +112,11 @@ To launch it at login, add `ClaudeUsage.app` to **System Settings → General �
 Login Items**. The app looks for `claude-usage` on a standard `PATH`
 (`~/.local/bin`, Homebrew, `/usr/bin`) or beside the app bundle.
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for scope,
+ground rules, and how to test changes.
+
 ## License
 
 [MIT](LICENSE)
