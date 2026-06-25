@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/multiclaude_logo.svg" alt="multi-claude" width="420">
+  <img src="assets/multiclaude_icon_mark.svg" alt="multi-claude" width="420">
 </p>
 
-# multi-claude
+# MultiClaude
 
 A small set of macOS companion tools for [Claude Code](https://claude.com/claude-code):
 run it under multiple accounts and keep an eye on each account's subscription
