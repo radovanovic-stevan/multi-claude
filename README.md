@@ -15,7 +15,7 @@ usage from the terminal or the desktop.
 | [ClaudeUsage widget](#claudeusage-widget) | A translucent always-on-desktop panel rendering `claude-usage`. |
 
 All three are read-only against your own Claude accounts. They read the OAuth
-tokens Claude Code already stores in the macOS **Keychain** — nothing is sent
+tokens Claude Code already stores in the macOS **Keychain** - nothing is sent
 anywhere except Anthropic's own usage endpoint, the same one behind `/usage`.
 
 > **Platform:** macOS only. The tools rely on the macOS Keychain (`security`)
@@ -33,44 +33,83 @@ it without depending on Claude's internal hashing.
 ## Configuring accounts
 
 Both `claude-acct` and `claude-usage` read the **same** account file, so they
-never drift. Copy the example and edit it:
+never drift. You don't have to create it yourself - the installer seeds it from
+`accounts.example`, and `claude-acct` writes a starter on first run if it's
+still missing. Either way, the file lands at
+`~/.config/claude-acct/accounts`; open it and fill in your accounts:
 
 ```sh
-mkdir -p ~/.config/claude-acct
-cp accounts.example ~/.config/claude-acct/accounts
 $EDITOR ~/.config/claude-acct/accounts
 ```
 
-One account per line — `<label>  <config_dir>  [email]`:
+One account per line - `<label>  <config_dir>  [email]`:
 
 ```
 work       ~/.claude            you@work.example
 personal   ~/.claude-personal   you@personal.example
 ```
 
-- `label` — the short name you type (`claude-acct work`).
-- `config_dir` — that account's `CLAUDE_CONFIG_DIR` (`~` and `$HOME` expand).
-- `email` — optional, shown for context only.
+- `label` - the short name you type (`claude-acct work`).
+- `config_dir` - that account's `CLAUDE_CONFIG_DIR` (`~` and `$HOME` expand).
+- `email` - optional, shown for context only.
 
 The **first** account listed is the "primary": its `<config_dir>/skills` folder
 is symlinked into the other accounts' config dirs, so every account sees the
 same skills.
 
 Override the location with `$CLAUDE_ACCT_CONFIG` if you don't want
-`~/.config/claude-acct/accounts`. If the file is missing, `claude-acct` writes a
-starter for you on first run.
+`~/.config/claude-acct/accounts`.
 
 ## Install
 
-Put the two scripts on your `PATH`:
+`claude-usage` needs only Python 3 from the system - no third-party packages;
+the widget build additionally needs the Xcode toolchain (`swiftc`).
+
+### Automatic install
+
+Run the interactive installer:
 
 ```sh
-ln -s "$PWD/claude-acct"  ~/.local/bin/claude-acct
-ln -s "$PWD/claude-usage" ~/.local/bin/claude-usage
+./install.sh
 ```
 
-(Any directory on your `PATH` works; `~/.local/bin` is just a common one.)
-`claude-usage` needs only Python 3 from the system — no third-party packages.
+It links the two scripts onto your `PATH`, seeds the accounts config from
+`accounts.example`, and (optionally) builds the desktop widget. It's
+**idempotent** - safe to re-run; each step checks current state and only does
+what's needed, and nothing is overwritten without asking. Useful flags:
+
+```sh
+./install.sh --yes            # non-interactive, accept defaults
+./install.sh --bindir DIR     # link into DIR instead of ~/.local/bin
+./install.sh --no-widget      # skip the widget build
+./install.sh --uninstall      # remove the links it created
+```
+
+### Manual install
+
+Prefer to do it by hand? The installer just automates these steps:
+
+1. **Link the scripts onto your `PATH`** (any directory on `PATH` works;
+   `~/.local/bin` is a common one):
+
+   ```sh
+   ln -s "$PWD/claude-acct"  ~/.local/bin/claude-acct
+   ln -s "$PWD/claude-usage" ~/.local/bin/claude-usage
+   ```
+
+2. **Seed the accounts config** - copy the example and edit it (see
+   [Configuring accounts](#configuring-accounts)):
+
+   ```sh
+   mkdir -p ~/.config/claude-acct
+   cp accounts.example ~/.config/claude-acct/accounts
+   ```
+
+3. **Build the widget** (optional - see [ClaudeUsage widget](#claudeusage-widget)):
+
+   ```sh
+   ./build-widget.sh
+   ```
 
 ## claude-acct
 
@@ -102,15 +141,8 @@ session, or can't reach the API shows a warning with a hint instead of numbers.
 
 A borderless, translucent panel that sits on the desktop (no Dock icon),
 shells out to `claude-usage --json` every 5 minutes, and renders the result.
-It's draggable and account-agnostic — it just displays whatever
+It's draggable and account-agnostic - it just displays whatever
 `claude-usage` reports.
-
-Build it (requires the Xcode toolchain / `swiftc`):
-
-```sh
-./build-widget.sh        # compiles widget/ClaudeUsageWidget.swift -> ClaudeUsage.app
-open ClaudeUsage.app
-```
 
 To launch it at login, add `ClaudeUsage.app` to **System Settings → General →
 Login Items**. The app looks for `claude-usage` on a standard `PATH`
@@ -118,7 +150,7 @@ Login Items**. The app looks for `claude-usage` on a standard `PATH`
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for scope,
+Contributions are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for scope,
 ground rules, and how to test changes.
 
 ## License

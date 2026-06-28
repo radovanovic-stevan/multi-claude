@@ -1,5 +1,5 @@
 #!/bin/zsh
-# build-widget.sh — compile the ClaudeUsage desktop panel into a .app bundle.
+# build-widget.sh - compile the ClaudeUsage desktop panel into a .app bundle.
 # Requires the Xcode toolchain (swiftc). Re-run after editing the Swift source.
 set -e
 cd "$(dirname "$0")"
