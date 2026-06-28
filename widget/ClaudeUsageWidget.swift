@@ -52,7 +52,7 @@ final class UsageStore: ObservableObject {
     @Published var updatedAt: Date?
 
     private var timer: Timer?
-    private let interval: TimeInterval = 300 // 5 min
+    private let interval: TimeInterval = 1800 // 30 min
 
     func start() {
         refresh()
