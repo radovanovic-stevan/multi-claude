@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# claude-usage — show subscription usage for each Claude Code account.
+# claude-usage - show subscription usage for each Claude Code account.
 #
 # Reads each account's OAuth token straight from the macOS Keychain (the same
 # per-account slots that `claude-acct` manages) and queries Anthropic's usage
-# endpoint — the data behind Claude Code's own `/usage` view.
+# endpoint - the data behind Claude Code's own `/usage` view.
 #
 # Fetches fresh on every run (no background polling). If an account has no
 # stored login, an expired session, or the API can't be reached, that account

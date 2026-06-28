@@ -2,7 +2,7 @@
 #
 # This file lives at ~/.config/claude-acct/accounts (override with
 # $CLAUDE_ACCT_CONFIG). The installer seeds it from accounts.example, and
-# claude-acct writes a starter on first run — so just edit the entries below.
+# claude-acct writes a starter on first run - so just edit the entries below.
 #
 # One account per line:   <label>  <config_dir>  [email]
 #   label       a short name you'll type, e.g. `claude-acct work`

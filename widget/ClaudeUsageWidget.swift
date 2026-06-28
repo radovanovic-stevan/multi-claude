@@ -1,4 +1,4 @@
-// ClaudeUsage — a small translucent desktop panel showing Claude subscription
+// ClaudeUsage - a small translucent desktop panel showing Claude subscription
 // usage for each account. It shells out to `claude-usage --json` (which reads
 // the OAuth tokens from the Keychain and queries the usage endpoint) and renders
 // the result. No Dock icon; sits on the desktop; draggable; auto-refreshes.
@@ -86,7 +86,7 @@ final class UsageStore: ObservableObject {
         // Login Items launch with a minimal PATH and a non-interactive shell, so
         // we can't rely on shell profiles. Build an explicit PATH (covers the
         // claude-usage symlink + the python3/security the script needs) and run
-        // the script directly — no shell, no profile sourcing.
+        // the script directly - no shell, no profile sourcing.
         var env = ProcessInfo.processInfo.environment
         let dirs = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin",
                     "/usr/bin", "/bin", "/usr/sbin", "/sbin"]

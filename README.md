@@ -15,7 +15,7 @@ usage from the terminal or the desktop.
 | [ClaudeUsage widget](#claudeusage-widget) | A translucent always-on-desktop panel rendering `claude-usage`. |
 
 All three are read-only against your own Claude accounts. They read the OAuth
-tokens Claude Code already stores in the macOS **Keychain** — nothing is sent
+tokens Claude Code already stores in the macOS **Keychain** - nothing is sent
 anywhere except Anthropic's own usage endpoint, the same one behind `/usage`.
 
 > **Platform:** macOS only. The tools rely on the macOS Keychain (`security`)
@@ -33,7 +33,7 @@ it without depending on Claude's internal hashing.
 ## Configuring accounts
 
 Both `claude-acct` and `claude-usage` read the **same** account file, so they
-never drift. You don't have to create it yourself — the installer seeds it from
+never drift. You don't have to create it yourself - the installer seeds it from
 `accounts.example`, and `claude-acct` writes a starter on first run if it's
 still missing. Either way, the file lands at
 `~/.config/claude-acct/accounts`; open it and fill in your accounts:
@@ -42,16 +42,16 @@ still missing. Either way, the file lands at
 $EDITOR ~/.config/claude-acct/accounts
 ```
 
-One account per line — `<label>  <config_dir>  [email]`:
+One account per line - `<label>  <config_dir>  [email]`:
 
 ```
 work       ~/.claude            you@work.example
 personal   ~/.claude-personal   you@personal.example
 ```
 
-- `label` — the short name you type (`claude-acct work`).
-- `config_dir` — that account's `CLAUDE_CONFIG_DIR` (`~` and `$HOME` expand).
-- `email` — optional, shown for context only.
+- `label` - the short name you type (`claude-acct work`).
+- `config_dir` - that account's `CLAUDE_CONFIG_DIR` (`~` and `$HOME` expand).
+- `email` - optional, shown for context only.
 
 The **first** account listed is the "primary": its `<config_dir>/skills` folder
 is symlinked into the other accounts' config dirs, so every account sees the
@@ -62,7 +62,7 @@ Override the location with `$CLAUDE_ACCT_CONFIG` if you don't want
 
 ## Install
 
-`claude-usage` needs only Python 3 from the system — no third-party packages;
+`claude-usage` needs only Python 3 from the system - no third-party packages;
 the widget build additionally needs the Xcode toolchain (`swiftc`).
 
 ### Automatic install
@@ -75,7 +75,7 @@ Run the interactive installer:
 
 It links the two scripts onto your `PATH`, seeds the accounts config from
 `accounts.example`, and (optionally) builds the desktop widget. It's
-**idempotent** — safe to re-run; each step checks current state and only does
+**idempotent** - safe to re-run; each step checks current state and only does
 what's needed, and nothing is overwritten without asking. Useful flags:
 
 ```sh
@@ -97,7 +97,7 @@ Prefer to do it by hand? The installer just automates these steps:
    ln -s "$PWD/claude-usage" ~/.local/bin/claude-usage
    ```
 
-2. **Seed the accounts config** — copy the example and edit it (see
+2. **Seed the accounts config** - copy the example and edit it (see
    [Configuring accounts](#configuring-accounts)):
 
    ```sh
@@ -105,7 +105,7 @@ Prefer to do it by hand? The installer just automates these steps:
    cp accounts.example ~/.config/claude-acct/accounts
    ```
 
-3. **Build the widget** (optional — see [ClaudeUsage widget](#claudeusage-widget)):
+3. **Build the widget** (optional - see [ClaudeUsage widget](#claudeusage-widget)):
 
    ```sh
    ./build-widget.sh
@@ -141,7 +141,7 @@ session, or can't reach the API shows a warning with a hint instead of numbers.
 
 A borderless, translucent panel that sits on the desktop (no Dock icon),
 shells out to `claude-usage --json` every 5 minutes, and renders the result.
-It's draggable and account-agnostic — it just displays whatever
+It's draggable and account-agnostic - it just displays whatever
 `claude-usage` reports.
 
 To launch it at login, add `ClaudeUsage.app` to **System Settings → General →
@@ -150,7 +150,7 @@ Login Items**. The app looks for `claude-usage` on a standard `PATH`
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for scope,
+Contributions are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for scope,
 ground rules, and how to test changes.
 
 ## License

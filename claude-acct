@@ -1,10 +1,10 @@
 #!/bin/zsh
-# claude-acct — launch Claude Code under a chosen account.
+# claude-acct - launch Claude Code under a chosen account.
 #
 # Claude Code keys its Keychain login *per config dir*: it reads/writes the slot
 # "Claude Code-credentials-<sha256(config_dir)[:8]>" and refreshes it itself. So
 # selecting an account is just a matter of pointing CLAUDE_CONFIG_DIR at that
-# account's dir — each dir keeps its own independent login.
+# account's dir - each dir keeps its own independent login.
 #
 # We additionally mirror the live login into a stable, human-named slot
 # ("Claude Code-credentials-<label>") before and after each session, so tools
@@ -33,7 +33,7 @@ load_accounts() {
   if [ ! -f "$CONFIG_FILE" ]; then
     mkdir -p "$(dirname "$CONFIG_FILE")"
     cat > "$CONFIG_FILE" <<'SAMPLE'
-# claude-acct accounts — one per line:
+# claude-acct accounts - one per line:
 #   <label>  <config_dir>  [email]
 # Lines starting with # are ignored. The first account is the "primary" whose
 # skills folder is shared with the others. Edit this file, then re-run.
@@ -59,7 +59,7 @@ SAMPLE
   done < "$CONFIG_FILE"
 
   if [ ${#LABELS} -eq 0 ]; then
-    echo "No accounts found in $CONFIG_FILE — add at least one." >&2
+    echo "No accounts found in $CONFIG_FILE - add at least one." >&2
     exit 1
   fi
 }

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# install.sh — interactive, idempotent installer for MultiClaude.
+# install.sh - interactive, idempotent installer for MultiClaude.
 #
 # Sets up the macOS companion tools for Claude Code:
 #   1. links `claude-acct` and `claude-usage` onto your PATH
@@ -108,16 +108,16 @@ preflight() {
   ok "macOS detected"
 
   if command -v python3 >/dev/null 2>&1; then
-    ok "python3 found ($(command -v python3)) — required by claude-usage"
+    ok "python3 found ($(command -v python3)) - required by claude-usage"
   else
     err "python3 not found. Install it (e.g. \`xcode-select --install\`) and re-run."
     exit 1
   fi
 
   if command -v swiftc >/dev/null 2>&1; then
-    ok "swiftc found — widget build available"
+    ok "swiftc found - widget build available"
   else
-    warn "swiftc not found — the desktop widget can't be built (Xcode toolchain needed)."
+    warn "swiftc not found - the desktop widget can't be built (Xcode toolchain needed)."
     [ "$DO_WIDGET" = "auto" ] && DO_WIDGET=no
     [ "$DO_WIDGET" = "yes" ] && { err "--widget requested but swiftc is missing."; exit 1; }
   fi
