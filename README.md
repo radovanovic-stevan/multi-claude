@@ -60,6 +60,22 @@ same skills.
 Override the location with `$CLAUDE_ACCT_CONFIG` if you don't want
 `~/.config/claude-acct/accounts`.
 
+### Single-account setup
+
+You don't need multiple accounts (or `claude-acct` at all) to use
+`claude-usage` and the widget. They read the OAuth token Claude Code already
+stores when you run `/login` normally, so a regular single-account install works
+fine. All you have to do is list that one account so `claude-usage` knows which
+config dir to look up:
+
+```
+default  ~/.claude   you@example.com
+```
+
+Then log in with plain `claude` as usual and run `claude-usage` (or launch the
+widget). `claude-acct` is only needed if you want to switch between several
+logins; for one account it's optional.
+
 ## Install
 
 `claude-usage` needs only Python 3 from the system - no third-party packages;
