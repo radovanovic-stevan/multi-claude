@@ -8,12 +8,21 @@
 # Fetches fresh on every run (no background polling). If an account has no
 # stored login, an expired session, or the API can't be reached, that account
 # shows a warning instead of numbers.
+#
+#   claude-usage                 colored bars for every account
+#   claude-usage --json          machine-readable (used by the desktop widget)
+#   claude-usage --watch [SECS]  full-screen view that refetches every SECS (300)
+#   claude-usage --line [LABEL]  one compact line for a Claude Code status line;
+#                                defaults to the account of $CLAUDE_CONFIG_DIR and
+#                                caches results for CLAUDE_USAGE_TTL secs (300)
 
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -124,10 +133,10 @@ class Unreachable(Exception):
     pass
 
 
-def fetch_usage(token):
+def fetch_usage(token, timeout=15):
     req = urllib.request.Request(USAGE_URL, headers={**HEADERS, "Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
@@ -187,26 +196,27 @@ def normalize(data):
     return out_limits, out_spend
 
 
+def gather_one(label, config_dir, mirror_slot, email, timeout=15):
+    acct = {"label": label, "email": email}
+    oauth = get_oauth(config_dir, mirror_slot)
+    token = oauth.get("accessToken") if oauth else None
+    if not token:
+        acct.update(ok=False, error="not logged in", hint=f"run: claude-acct {label}")
+    else:
+        try:
+            limits, spend = normalize(fetch_usage(token, timeout))
+            acct.update(ok=True, limits=limits, spend=spend)
+        except Unreachable as e:
+            expired = "expired" in str(e)
+            acct.update(ok=False, error=str(e),
+                        hint=f"re-login: claude-acct {label}" if expired else "try again later")
+    return acct
+
+
 def gather():
     """Build the full report (all accounts) used by both renderers."""
-    accounts = []
-    for label, config_dir, mirror_slot, email in ACCOUNTS:
-        acct = {"label": label, "email": email}
-        oauth = get_oauth(config_dir, mirror_slot)
-        token = oauth.get("accessToken") if oauth else None
-        if not token:
-            acct.update(ok=False, error="not logged in", hint=f"run: claude-acct {label}")
-        else:
-            try:
-                limits, spend = normalize(fetch_usage(token))
-                acct.update(ok=True, limits=limits, spend=spend)
-            except Unreachable as e:
-                expired = "expired" in str(e)
-                acct.update(ok=False, error=str(e),
-                            hint=f"re-login: claude-acct {label}" if expired else "try again later")
-        accounts.append(acct)
     return {"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "accounts": accounts}
+            "accounts": [gather_one(*a) for a in ACCOUNTS]}
 
 
 # ---- text rendering --------------------------------------------------------
@@ -266,13 +276,135 @@ def render_text(report):
         print()
 
 
-# ---- main ------------------------------------------------------------------
-def main():
-    report = gather()
-    if "--json" in sys.argv[1:]:
-        print(json.dumps(report))
+# ---- status line -----------------------------------------------------------
+# Claude Code re-runs its status line command after every message, so --line
+# serves from a small per-account cache and only hits the API once per TTL.
+# The cache holds usage numbers only - never the token.
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                         "claude-usage")
+CACHE_TTL = int(os.environ.get("CLAUDE_USAGE_TTL", "300"))
+SHORT_LABELS = {"session": "5h", "weekly_all": "wk", "weekly_opus": "opus",
+                "weekly_sonnet": "sonnet"}
+
+
+def current_account(label=None):
+    """The account named `label`, else the one whose config dir is
+    $CLAUDE_CONFIG_DIR (or ~/.claude when unset, like Claude Code itself)."""
+    if label:
+        return next((a for a in ACCOUNTS if a[0] == label), None)
+    cur = os.path.realpath(os.path.expanduser(
+        os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"))
+    return next((a for a in ACCOUNTS
+                 if os.path.realpath(os.path.expanduser(a[1])) == cur), None)
+
+
+def cached_account(account):
+    """Return (acct, stale) for one account, refetching once the cache is older
+    than CACHE_TTL. On a failed refetch the last good numbers are kept (stale)."""
+    path = os.path.join(CACHE_DIR, f"{account[0]}.json")
+    try:
+        with open(path) as fh:
+            cache = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        cache = {}
+    if time.time() - cache.get("checked_at", 0) < CACHE_TTL and cache.get("acct"):
+        return cache["acct"], cache.get("stale", False)
+
+    fresh = gather_one(*account, timeout=5)
+    good = cache.get("acct") if cache.get("acct", {}).get("ok") else None
+    acct, stale = (fresh, False) if fresh.get("ok") or not good else (good, True)
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        # Retry no sooner than the TTL even on failure, so a dead network or an
+        # expired login doesn't stall every status line refresh.
+        fd, tmp = tempfile.mkstemp(dir=CACHE_DIR)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"checked_at": time.time(), "acct": acct, "stale": stale}, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return acct, stale
+
+
+def short_reset(iso):
+    try:
+        secs = int((datetime.fromisoformat(iso) - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return ""
+    if secs <= 0:
+        return ""
+    if secs < 86400:
+        h, m = divmod(secs // 60, 60)
+        return f"{h}h{m:02d}m" if h else f"{m}m"
+    return f"{secs // 86400}d"
+
+
+def render_line(label=None):
+    account = current_account(label)
+    if not account:
+        print(DIM("usage: unknown account"))
+        return
+    acct, stale = cached_account(account)
+    parts = [BOLD(acct["label"])]
+    if not acct.get("ok"):
+        parts.append(YELLOW("⚠ " + acct["error"]))
     else:
-        render_text(report)
+        for lim in acct["limits"]:
+            color = sev_color(lim["severity"], lim["percent"])
+            reset = short_reset(lim["resets_at"])
+            parts.append(f"{SHORT_LABELS.get(lim['kind'], lim['kind'])} "
+                         + color("%.0f%%" % lim["percent"])
+                         + (DIM(f" ↻{reset}") if reset else ""))
+        spend = acct.get("spend")
+        if spend and spend["used"] > 0:
+            color = sev_color(spend["severity"], spend["percent"])
+            parts.append("extra " + color("%.2f %s" % (spend["used"], spend["currency"])))
+        if stale:
+            parts.append(YELLOW("⚠ stale"))
+    print(DIM(" · ").join(parts))
+
+
+# ---- watch -------------------------------------------------------------
+def watch(interval):
+    """Full-screen view: refetch every `interval` secs, redraw the reset
+    countdowns every 30s in between. Ctrl-C to quit."""
+    sys.stdout.write("\033[?25l")                       # hide cursor
+    try:
+        report, fetched = None, 0.0
+        while True:
+            if time.time() - fetched >= interval:
+                report, fetched = gather(), time.time()
+            sys.stdout.write("\033[H\033[2J")               # home + clear
+            render_text(report)
+            print(DIM(f"  refreshes every {interval // 60 or 1}m · ctrl-c to quit"))
+            sys.stdout.flush()
+            time.sleep(min(30, interval))
+    finally:
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
+
+# ---- main ------------------------------------------------------------------
+def arg_after(flag, default=None):
+    args = sys.argv[1:]
+    i = args.index(flag)
+    nxt = args[i + 1] if i + 1 < len(args) else None
+    return nxt if nxt and not nxt.startswith("-") else default
+
+
+def main():
+    global USE_COLOR
+    args = sys.argv[1:]
+    if "--line" in args:
+        # Claude Code pipes the status line, but it does render ANSI colors.
+        USE_COLOR = "NO_COLOR" not in os.environ
+        render_line(arg_after("--line"))
+    elif "--watch" in args:
+        watch(max(60, int(arg_after("--watch", "300"))))
+    elif "--json" in args:
+        print(json.dumps(gather()))
+    else:
+        render_text(gather())
 
 
 if __name__ == "__main__":

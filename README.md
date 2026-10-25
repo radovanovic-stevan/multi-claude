@@ -145,8 +145,22 @@ session (to capture token refreshes), and shares the primary account's skills.
 Print usage for every configured account:
 
 ```sh
-claude-usage           # colored bars in the terminal
-claude-usage --json    # machine-readable, used by the widget
+claude-usage                 # colored bars in the terminal
+claude-usage --json          # machine-readable, used by the widget
+claude-usage --watch [SECS]  # full-screen view, refetches every SECS (default 300)
+claude-usage --line [LABEL]  # one compact line, for a Claude Code status line
+```
+
+### In the terminal
+
+`--line` prints one line for the current account (picked from
+`$CLAUDE_CONFIG_DIR`, so it follows `claude-acct`) and caches results in
+`~/.cache/claude-usage` for `$CLAUDE_USAGE_TTL` seconds (default 300). To show it
+at the bottom of every Claude Code session, add this to each account's
+`<config_dir>/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "~/.local/bin/claude-usage --line", "padding": 0 }
 ```
 
 Each account shows its session (5h), weekly, and (if enabled) extra-usage
