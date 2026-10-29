@@ -5,13 +5,15 @@
 # MultiClaude
 
 A small set of macOS companion tools for [Claude Code](https://claude.com/claude-code):
-run it under multiple accounts and keep an eye on each account's subscription
-usage from the terminal or the desktop.
+run it under multiple accounts, keep an eye on each account's subscription
+usage from the terminal or the desktop, and name every session so a wall of
+terminal splits is readable.
 
 | Tool | What it does |
 | --- | --- |
 | [`claude-acct`](#claude-acct) | Launch Claude Code under a chosen account (separate logins, shared skills). |
 | [`claude-usage`](#claude-usage) | Show subscription usage (session / weekly / extra) for each account. |
+| [`claude-statusline`](#claude-statusline) | Name each session after its repo, so a wall of terminal splits is readable. |
 | [ClaudeUsage widget](#claudeusage-widget) | A translucent always-on-desktop panel rendering `claude-usage`. |
 
 All three are read-only against your own Claude accounts. They read the OAuth
@@ -109,8 +111,9 @@ Prefer to do it by hand? The installer just automates these steps:
    `~/.local/bin` is a common one):
 
    ```sh
-   ln -s "$PWD/claude-acct"  ~/.local/bin/claude-acct
-   ln -s "$PWD/claude-usage" ~/.local/bin/claude-usage
+   ln -s "$PWD/claude-acct"       ~/.local/bin/claude-acct
+   ln -s "$PWD/claude-usage"      ~/.local/bin/claude-usage
+   ln -s "$PWD/claude-statusline" ~/.local/bin/claude-statusline
    ```
 
 2. **Seed the accounts config** - copy the example and edit it (see
@@ -121,7 +124,15 @@ Prefer to do it by hand? The installer just automates these steps:
    cp accounts.example ~/.config/claude-acct/accounts
    ```
 
-3. **Build the widget** (optional - see [ClaudeUsage widget](#claudeusage-widget)):
+3. **Point the status line at it** (optional - see
+   [`claude-statusline`](#claude-statusline)) by adding this to each account's
+   `<config_dir>/settings.json`:
+
+   ```json
+   "statusLine": { "type": "command", "command": "~/.local/bin/claude-statusline", "padding": 0 }
+   ```
+
+4. **Build the widget** (optional - see [ClaudeUsage widget](#claudeusage-widget)):
 
    ```sh
    ./build-widget.sh
@@ -163,9 +174,63 @@ at the bottom of every Claude Code session, add this to each account's
 "statusLine": { "type": "command", "command": "~/.local/bin/claude-usage --line", "padding": 0 }
 ```
 
+Or use [`claude-statusline`](#claude-statusline) instead, which puts the
+session's name in front of the same numbers.
+
 Each account shows its session (5h), weekly, and (if enabled) extra-usage
 limits with reset times. An account that isn't logged in, has an expired
 session, or can't reach the API shows a warning with a hint instead of numbers.
+
+## claude-statusline
+
+A tab full of terminal splits all looks the same. This names each one:
+
+```
+▌ zng-api ⎇ main · work · 5h 12% ↻4h36m · wk 9% ↻2d
+▌ zng-api/apps/core ⎇ release/4.2 · work · 5h 12% ↻4h36m · wk 9% ↻2d
+▌ ontopo-crm ⎇ main · personal · 5h 3% ↻4h36m · wk 7% ↻2d
+```
+
+The name is the session's git repository, plus the path below its root when
+the session sits in a subdirectory, followed by whatever `claude-usage --line`
+prints. Nothing to configure - the installer offers to set it for every account
+in your accounts file, keeping a `.bak` of each `settings.json`.
+
+Why a status line rather than a terminal feature: no terminal will put a title
+on a split. Ghostty has the actions for it - a split is a "surface" and
+`prompt_surface_title` renames one - but a surface title only reaches the
+window and tab title, and only while that split has focus. In a tab of four
+splits you'd see one name: the one you're already looking at. A status line is
+content *inside* the split, so every split shows its own, focused or not.
+
+### Renaming a session
+
+The repository is the right name almost always. When it isn't - two sessions in
+one repo - rename one from inside it. `!` runs a shell command without spending
+a model turn:
+
+```
+! claude-statusline -l payments hotfix   # rename this session
+! claude-statusline -l                   # back to the repository name
+! claude-statusline --show-label         # what's overriding it, if anything
+```
+
+The override is keyed by session id, so it reaches that session only, and never
+leaks into another split. `CLAUDE_SPLIT_LABEL=payments claude` works too, if
+you'd rather decide before you start.
+
+### Appending something else
+
+The trailing numbers are just whatever `claude-usage --line` prints. Point that
+at something else, or switch it off:
+
+```sh
+export CLAUDE_STATUSLINE_SUFFIX_CMD="my-token-counter --compact"
+export CLAUDE_STATUSLINE_SUFFIX_CMD=/dev/null   # name and branch only
+```
+
+A suffix command that's missing, slow or failing is left out rather than
+breaking the line.
 
 ## ClaudeUsage widget
 

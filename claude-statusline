@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+# claude-statusline - name each Claude Code session, so a wall of terminal
+# splits is readable at a glance.
+#
+#   ▌ zng-api ⎇ main · work · 5h 12% ↻4h36m · wk 9% ↻2d
+#
+# No terminal will put a title on a split. Ghostty, for one, has the actions
+# for it - a split is a "surface" and `prompt_surface_title` renames it - but a
+# surface title only reaches the window and tab title, and only while that
+# split has focus. In a tab of four splits you see one name: the one you're
+# already looking at. So the name has to be drawn by the program inside the
+# split, and a status line is exactly that: content, on screen in every split
+# at once, focused or not.
+#
+# The name is the session's git repository, plus the path below its root when
+# it sits in a subdirectory. Nothing to set up. Where that isn't what tells two
+# sessions apart - two of them in one repo - rename one from inside it:
+#
+#   claude-statusline               render (Claude Code pipes it JSON on stdin)
+#   claude-statusline -l NAME       rename this session
+#   claude-statusline -l            go back to the repository name
+#   claude-statusline --show-label  print the name overriding it, if any
+#
+# Inside a session, `!` runs a shell command without spending a model turn:
+#
+#   ! claude-statusline -l payments hotfix
+
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Appended after the name. Defaults to this repo's own usage meter, taken from
+# alongside this script so a checkout works before anything is on PATH. Point
+# it elsewhere, or at nothing, with CLAUDE_STATUSLINE_SUFFIX_CMD.
+_sibling = os.path.join(HERE, "claude-usage")
+SUFFIX_CMD = os.environ.get(
+    "CLAUDE_STATUSLINE_SUFFIX_CMD",
+    f"{_sibling} --line" if os.path.exists(_sibling) else "claude-usage --line")
+
+LABEL_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                         "claude-statusline")
+
+DIM = "\033[2m"
+RESET = "\033[0m"
+NAME = "\033[1;38;5;214m"    # bold amber - the one thing to spot across splits
+SUB = "\033[38;5;110m"
+BRANCH = "\033[38;5;108m"
+
+
+# ---- the name --------------------------------------------------------------
+def label_path(session_id):
+    return os.path.join(LABEL_DIR, f"{session_id}.label") if session_id else None
+
+
+def explicit_name(session_id):
+    """A name set with -l, else one inherited from the launching shell."""
+    path = label_path(session_id)
+    if path:
+        try:
+            with open(path) as fh:
+                return fh.read().strip()
+        except OSError:
+            pass
+    return os.environ.get("CLAUDE_SPLIT_LABEL", "").strip()
+
+
+def git(cwd, *args):
+    try:
+        out = subprocess.run(["git", "-C", cwd, *args],
+                             capture_output=True, text=True, timeout=1)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def derived_name(cwd):
+    """(name, subpath) - the repository, and where in it this session sits."""
+    root = git(cwd, "rev-parse", "--show-toplevel")
+    if not root:
+        home = os.path.expanduser("~")
+        return ("~" if cwd == home else os.path.basename(cwd.rstrip(os.sep)) or cwd), ""
+    sub = os.path.relpath(cwd, root)
+    return os.path.basename(root), "" if sub == "." else sub
+
+
+# ---- the line --------------------------------------------------------------
+def suffix_line():
+    cmd = shlex.split(SUFFIX_CMD)
+    if not cmd or not (os.path.exists(cmd[0]) or shutil.which(cmd[0])):
+        return ""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip()
+
+
+def render():
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+
+    cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
+
+    name, sub = explicit_name(payload.get("session_id", "")), ""
+    if not name:
+        name, sub = derived_name(cwd)
+
+    title = f"{NAME}▌ {name}{RESET}"
+    if sub:
+        title += f"{SUB}/{sub}{RESET}"
+
+    parts = [title]
+    branch = git(cwd, "symbolic-ref", "--short", "-q", "HEAD")
+    if len(branch) > 24:
+        branch = branch[:23] + "…"
+    if branch:
+        parts.append(f"{BRANCH}⎇ {branch}{RESET}")
+    suffix = suffix_line()
+    if suffix:
+        parts.append(suffix)
+
+    print(f"{DIM} · {RESET}".join(parts))
+
+
+# ---- renaming --------------------------------------------------------------
+def set_label(name):
+    """Keyed by session id, which Claude Code also passes to the status line,
+    so a rename reaches that session and no other split."""
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    path = label_path(session_id)
+    if not path:
+        sys.exit("claude-statusline: no CLAUDE_CODE_SESSION_ID - run this from "
+                 "inside the session you're renaming, as `! claude-statusline -l NAME`")
+    if not name:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        print("name cleared - back to the repository name")
+        return
+    os.makedirs(LABEL_DIR, exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(name + "\n")
+    print(f"name: {name}")
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-l", "--label"):
+        set_label(" ".join(args[1:]).strip())
+    elif args and args[0] == "--show-label":
+        print(explicit_name(os.environ.get("CLAUDE_CODE_SESSION_ID", "")))
+    elif args and args[0] in ("-h", "--help"):
+        with open(__file__) as fh:
+            for line in fh.read().split("\n")[1:]:
+                if not line.startswith("#"):
+                    break
+                print(line[2:] if line.startswith("# ") else line[1:])
+    elif args:
+        sys.exit(f"claude-statusline: unknown option {args[0]} (try --help)")
+    else:
+        render()
+
+
+if __name__ == "__main__":
+    main()

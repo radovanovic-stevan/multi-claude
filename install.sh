@@ -124,7 +124,7 @@ preflight() {
 }
 
 # ---- step: link scripts onto PATH -----------------------------------------
-SCRIPTS=(claude-acct claude-usage)
+SCRIPTS=(claude-acct claude-usage claude-statusline)
 
 link_one() {
   local name="$1"
@@ -196,6 +196,55 @@ accounts_setup() {
   fi
 }
 
+# ---- step: status line -----------------------------------------------------
+# The config dirs are already listed in the accounts file, so every account can
+# be pointed at the status line in one pass.
+account_config_dirs() {
+  local cfg="${CLAUDE_ACCT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-acct/accounts}"
+  local -a dirs=()
+  if [ -f "$cfg" ]; then
+    local line; local -a fields
+    while IFS= read -r line; do
+      [[ "$line" == \#* || -z "${line// /}" ]] && continue
+      fields=(${=line})
+      [ ${#fields[@]} -ge 2 ] && dirs+=("${fields[2]/#\~/$HOME}")
+    done < "$cfg"
+  fi
+  [ ${#dirs[@]} -eq 0 ] && dirs=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}")
+  print -rl -- "${dirs[@]}"
+}
+
+statusline_setup() {
+  head "Claude Code status line"
+  info "Names each session after its git repo, so a wall of splits is readable."
+  ask "Point Claude Code's status line at claude-statusline?" y || {
+    info "skipping - set it later with: ${C_DIM}claude-statusline --help${C_RESET}"
+    return 0
+  }
+
+  local -a dirs; dirs=(${(f)"$(account_config_dirs)"})
+  local d settings
+  for d in "${dirs[@]}"; do
+    settings="$d/settings.json"
+    if [ ! -f "$settings" ]; then
+      info "no settings.json in $d - skipped"
+      continue
+    fi
+    cp "$settings" "$settings.bak"
+    python3 - "$settings" "$BINDIR/claude-statusline" <<'PY'
+import json, sys
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    cfg = json.load(fh)
+cfg["statusLine"] = {"type": "command", "command": cmd, "padding": 0}
+with open(path, "w") as fh:
+    fh.write(json.dumps(cfg, indent=2) + "\n")
+PY
+    ok "set in $settings ${C_DIM}(backup: $settings.bak)${C_RESET}"
+  done
+  info "It updates on your next message - no restart needed."
+}
+
 # ---- step: widget ----------------------------------------------------------
 widget_build() {
   head "Desktop widget"
@@ -226,6 +275,30 @@ do_uninstall() {
     fi
   done
 
+  # Only clear a status line that points at this repo; leave anyone else's.
+  local -a dirs; dirs=(${(f)"$(account_config_dirs)"})
+  local d settings
+  for d in "${dirs[@]}"; do
+    settings="$d/settings.json"
+    [ -f "$settings" ] || continue
+    if python3 - "$settings" "$REPO/claude-statusline" <<'PY'
+import json, os, sys
+path, target = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    cfg = json.load(fh)
+cmd = (cfg.get("statusLine") or {}).get("command", "")
+word = cmd.split()[0] if cmd else ""
+if not word or os.path.realpath(os.path.expanduser(word)) != os.path.realpath(target):
+    sys.exit(1)
+cfg.pop("statusLine", None)
+with open(path, "w") as fh:
+    fh.write(json.dumps(cfg, indent=2) + "\n")
+PY
+    then
+      ok "removed status line from $settings"
+    fi
+  done
+
   if [ -d "$REPO/ClaudeUsage.app" ] && ask "Remove the built widget ($REPO/ClaudeUsage.app)?" n; then
     rm -rf "$REPO/ClaudeUsage.app"; ok "removed ClaudeUsage.app"
   fi
@@ -247,6 +320,7 @@ print -r -- "${C_BOLD}MultiClaude installer${C_RESET}  ${C_DIM}($REPO)${C_RESET}
 preflight
 install_links
 accounts_setup
+statusline_setup
 widget_build
 
 head "All set."
